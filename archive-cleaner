@@ -1,0 +1,80 @@
+#!/usr/bin/env python
+
+from glob import glob
+from re import search
+from re import finditer
+from os.path import basename
+from os.path import isfile
+from os.path import join
+from sys import stderr
+
+from libarchive import file_reader
+
+ARCHS = ['x86_64']
+PKGEXT = '.tar.xz'
+ARCHIVE_DIR = '/srv/archive'
+SOURCE_DIR = '/srv/ftp'
+SOURCE_WHITELIST = ['core', 'extra', 'staging', 'testing', 'community', 'community-staging', 'community-testing', 'multilib', 'multilib-staging', 'multilib-testing', 'gnome-unstable', 'kde-unstable']
+
+
+def read_file(filename, arch):
+    print(f'==> checking {filename}', file=stderr)
+    packages = [basename(filename)]
+    with file_reader(filename) as archive:
+        for entry in archive:
+            if entry.name == '.BUILDINFO':
+                packages.extend(get_packages_from_buildinfo(entry, arch))
+                break
+    if 1 == len(packages):
+        print(f' -> WARNING: .BUILDINFO not found in {filename}', file=stderr)
+    for package in packages:
+        if 'pacman-git' in package:
+            print(f' -> WARNING: found {package} in {filename}', file=stderr)
+    return packages
+
+
+def get_packages_from_buildinfo(archive_entry, arch):
+    buildinfo = b''.join(archive_entry.get_blocks()).decode()
+    m = search('format = (\\d)', buildinfo)
+    buildinfo_format = 0 if not m else int(m.group(1))
+    installed = [m.group(1) for m in finditer(r'installed = (.+)', buildinfo)]
+    print(f' -> found .BUILDINFO format {buildinfo_format} with {len(installed)} installed', file=stderr)
+    if buildinfo_format > 0:
+        for package in installed:
+            filename = f'{package}.pkg.tar.xz'
+            directory = join(ARCHIVE_DIR, 'packages', package[0], filename)
+            if not isfile(join(directory, filename)):
+                print(f' -> ERROR: could not find {package} in archive', file=stderr)
+        return installed
+    packages = []
+    for package in installed:
+        filename_any = f'{package}-any.pkg.tar.xz'
+        filename_arch = f'{package}-{arch}.pkg.tar.xz'
+        m = search('^(.+)-(\\d+)?:?([\\w\\d\\.+~]+)-([\\d\\.]+)$', package)
+        if not m:
+            print(f' -> ERROR: could not parse package {package}', file=stderr)
+            return []
+        pkgname = m.group(1)
+        directory = join(ARCHIVE_DIR, 'packages', pkgname[0], pkgname)
+        if isfile(join(directory, filename_any)):
+            packages.append(filename_any)
+        elif isfile(join(directory, filename_arch)):
+            packages.append(filename_arch)
+        else:
+            print(f' -> ERROR: could not find {package} in archive', file=stderr)
+    return packages
+
+
+def main():
+    needed = set()
+    for subdir in SOURCE_WHITELIST:
+        for arch in ARCHS:
+            directory = join(SOURCE_DIR, subdir, 'os', arch, f'*{PKGEXT}')
+            print(f'==> entering {directory}', file=stderr)
+            for filename in glob(directory):
+                needed = needed.union(read_file(filename, arch))
+    print('\n'.join(needed))
+
+
+if __name__ == '__main__':
+    main()
