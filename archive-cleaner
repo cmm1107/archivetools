@@ -7,6 +7,7 @@ from os.path import basename
 from os.path import isfile
 from os.path import join
 from sys import stderr
+from multiprocessing import Pool
 
 from libarchive import file_reader
 
@@ -18,68 +19,75 @@ SOURCE_WHITELIST = ['core', 'extra', 'staging', 'testing', 'community', 'communi
 
 
 def read_file(filename, arch):
-    print(f'==> checking {filename}', file=stderr)
-    packages = [basename(filename)]
+    packages = []
     with file_reader(filename) as archive:
         for entry in archive:
             if entry.name == '.BUILDINFO':
-                packages.extend(get_packages_from_buildinfo(entry, arch))
+                packages.extend(get_packages_from_buildinfo(filename, entry, arch))
                 break
-    if 1 == len(packages):
-        print(f' -> WARNING: .BUILDINFO not found in {filename}', file=stderr)
-    for package in packages:
-        if 'pacman-git' in package:
-            print(f' -> WARNING: found {package} in {filename}', file=stderr)
+    if not packages:
+        print(f'WARNING: .BUILDINFO not found in package {filename}', file=stderr)
+    packages.append(basename(filename))
     return packages
 
 
-def get_packages_from_buildinfo(archive_entry, arch):
+def get_packages_from_buildinfo(filename, archive_entry, arch):
     buildinfo = b''.join(archive_entry.get_blocks()).decode()
     m = search('format = (\\d)', buildinfo)
     buildinfo_format = 0 if not m else int(m.group(1))
     installed = [m.group(1) for m in finditer(r'installed = (.+)', buildinfo)]
-    print(f' -> found .BUILDINFO format {buildinfo_format} with {len(installed)} installed', file=stderr)
+    print(f'INFO: found .BUILDINFO format {buildinfo_format} with {len(installed)} installed packages for {filename}', file=stderr)
     packages = []
     if buildinfo_format > 0:
         for package in installed:
-            filename = f'{package}.pkg.tar.xz'
+            pkgfilename = f'{package}.pkg.tar.xz'
             m = search('^(.+)-(\\d+)?:?([\\w\\d\\.+~]+)-([\\d\\.]+)-(\\w+)$', package)
             if not m:
-                print(f' -> ERROR: could not parse package {package}', file=stderr)
+                print(f'ERROR: failed to parse package label {package} for {filename}', file=stderr)
                 continue
             pkgname = m.group(1)
             directory = join(ARCHIVE_DIR, 'packages', pkgname[0], pkgname)
-            if not isfile(join(directory, filename)):
-                print(f' -> ERROR: could not find {package} in archive', file=stderr)
+            path = join(directory, pkgfilename)
+            if not isfile(path):
+                print(f'ERROR: {package} needed for {filename} not in archive {path}', file=stderr)
                 continue
-            packages.append(filename)
+            packages.append(pkgfilename)
         return packages
     for package in installed:
         filename_any = f'{package}-any.pkg.tar.xz'
         filename_arch = f'{package}-{arch}.pkg.tar.xz'
         m = search('^(.+)-(\\d+)?:?([\\w\\d\\.+~]+)-([\\d\\.]+)$', package)
         if not m:
-            print(f' -> ERROR: could not parse package {package}', file=stderr)
+            print(f'ERROR: failed to parse package label {package} for {filename}', file=stderr)
             continue
         pkgname = m.group(1)
         directory = join(ARCHIVE_DIR, 'packages', pkgname[0], pkgname)
-        if isfile(join(directory, filename_any)):
+        path_any = join(directory, filename_any)
+        path_arch = join(directory, filename_arch)
+        if isfile(path_any):
             packages.append(filename_any)
-        elif isfile(join(directory, filename_arch)):
+        elif isfile(path_arch):
             packages.append(filename_arch)
         else:
-            print(f' -> ERROR: could not find {package} in archive', file=stderr)
+            print(f'ERROR: {package} needed for {filename} not in archive {path_any}', file=stderr)
+            print(f'ERROR: {package} needed for {filename} not in archive {path_arch}', file=stderr)
     return packages
 
 
 def main():
+    tasks = []
     needed = set()
     for subdir in SOURCE_WHITELIST:
         for arch in ARCHS:
-            directory = join(SOURCE_DIR, subdir, 'os', arch, f'*{PKGEXT}')
-            print(f'==> entering {directory}', file=stderr)
-            for filename in glob(directory):
-                needed = needed.union(read_file(filename, arch))
+            directory = join(SOURCE_DIR, subdir, 'os', arch)
+            for filename in glob(join(directory, f'*{PKGEXT}')):
+                tasks.append((filename, arch))
+
+    with Pool(processes=32) as pool:
+        results = pool.starmap(read_file, tasks)
+
+    for result in results:
+        needed = needed.union(result)
     print('\n'.join(needed))
 
 
