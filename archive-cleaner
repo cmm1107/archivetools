@@ -39,6 +39,7 @@ def get_packages_from_buildinfo(archive_entry, arch):
     buildinfo_format = 0 if not m else int(m.group(1))
     installed = [m.group(1) for m in finditer(r'installed = (.+)', buildinfo)]
     print(f' -> found .BUILDINFO format {buildinfo_format} with {len(installed)} installed', file=stderr)
+    packages = []
     if buildinfo_format > 0:
         for package in installed:
             filename = f'{package}.pkg.tar.xz'
@@ -50,8 +51,9 @@ def get_packages_from_buildinfo(archive_entry, arch):
             directory = join(ARCHIVE_DIR, 'packages', pkgname[0], pkgname)
             if not isfile(join(directory, filename)):
                 print(f' -> ERROR: could not find {package} in archive', file=stderr)
-        return installed
-    packages = []
+                continue
+            packages.append(filename)
+        return packages
     for package in installed:
         filename_any = f'{package}-any.pkg.tar.xz'
         filename_arch = f'{package}-{arch}.pkg.tar.xz'
