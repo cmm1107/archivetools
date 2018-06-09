@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from datetime import datetime
 from glob import glob
 from multiprocessing import Pool
+from multiprocessing import cpu_count
 from os import unlink
 from os.path import basename
 from os.path import isfile
@@ -74,7 +75,7 @@ def get_packages_from_buildinfo(archive, filename, archive_entry, arch):
     return packages
 
 
-def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAULT_KEEP_YEARS, delete=False):
+def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAULT_KEEP_YEARS, processes=cpu_count() * 2, delete=False):
     tasks = []
     needed = set()
     for subdir in SOURCE_WHITELIST:
@@ -83,7 +84,7 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
             for filename in glob(join(directory, f'*{PKG_EXT}')):
                 tasks.append((archive, filename, arch))
 
-    with Pool(processes=32) as pool:
+    with Pool(processes=processes) as pool:
         results = pool.starmap(read_file, tasks)
 
     for result in results:
@@ -121,6 +122,7 @@ if __name__ == '__main__':
     parser.add_argument('--archive', default=DEFAULT_ARCHIVE_DIR, help=f'root directory of the archive (default: {DEFAULT_ARCHIVE_DIR})')
     parser.add_argument('--repo', default=DEFAULT_SOURCE_DIR, help=f'root directory of the repo (default: {DEFAULT_SOURCE_DIR})')
     parser.add_argument('--keep-years', type=int, default=DEFAULT_KEEP_YEARS, help=f'amount of years to keep (default: {DEFAULT_KEEP_YEARS})')
+    parser.add_argument('--processes', type=int, default=cpu_count() * 2, help=f'number of parallel processes (default: {cpu_count()*2})')
     parser.add_argument('--delete', default=False, action='store_true', help=f'really delete unwanted files')
     args = parser.parse_args()
-    main(args.repo, args.archive, args.keep_years, args.delete)
+    main(args.repo, args.archive, args.keep_years, args.processes, args.delete)
