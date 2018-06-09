@@ -1,19 +1,27 @@
 # Maintainer: Sébastien Luttringer
 
 pkgname=archivetools-git
-pkgver="$(git log --pretty=format:''|wc -l)"
+pkgver=2+4+gd954a96
 pkgrel=1
-pkgdesc='Archlinux Archive Tools (Git version)'
+pkgdesc='Arch Linux Archive Tools'
 arch=('any')
-url='https://github.com/seblu/archivetools'
+url='https://github.com/archlinux/archivetools'
 license=('GPL2')
-depends=('rsync' 'hardlink' 'xz' 'util-linux')
-conflicts=('archivetools')
+depends=('rsync' 'hardlink' 'xz' 'util-linux' 'systemd')
+makedepends=('git')
 backup=('etc/archive.conf')
-install=archivetools.install
+provides=('archivetools')
+conflicts=('archivetools')
+source=(${pkgname}::"git+https://github.com/archlinux/archivetools.git")
+md5sums=('SKIP')
+
+pkgver() {
+  cd $pkgname
+  git describe --tags|sed 's|-|+|g'|sed -E 's|v?(.*)|\1|'
+}
 
 package() {
-  cd "$startdir"
+  cd $pkgname
   install -Dm644 archive.conf "$pkgdir/etc/archive.conf"
   install -Dm755 archive.sh "$pkgdir/usr/bin/archive"
   # systemd stuff
