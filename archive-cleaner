@@ -1,29 +1,34 @@
 #!/usr/bin/env python
 
+from argparse import ArgumentParser
+from datetime import datetime
 from glob import glob
-from re import search
-from re import finditer
+from multiprocessing import Pool
+from os import unlink
 from os.path import basename
 from os.path import isfile
 from os.path import join
+from re import finditer
+from re import search
 from sys import stderr
-from multiprocessing import Pool
 
 from libarchive import file_reader
 
 ARCHS = ['x86_64']
-PKGEXT = '.tar.xz'
-ARCHIVE_DIR = '/srv/archive'
-SOURCE_DIR = '/srv/ftp'
+PKG_EXT = '.tar.xz'
+SIG_EXT = '.sig'
+DEFAULT_ARCHIVE_DIR = '/srv/archive'
+DEFAULT_SOURCE_DIR = '/srv/ftp'
 SOURCE_WHITELIST = ['core', 'extra', 'staging', 'testing', 'community', 'community-staging', 'community-testing', 'multilib', 'multilib-staging', 'multilib-testing', 'gnome-unstable', 'kde-unstable']
+DEFAULT_KEEP_YEARS = 3
 
 
-def read_file(filename, arch):
+def read_file(archive, filename, arch):
     packages = []
-    with file_reader(filename) as archive:
-        for entry in archive:
+    with file_reader(filename) as pkg:
+        for entry in pkg:
             if entry.name == '.BUILDINFO':
-                packages.extend(get_packages_from_buildinfo(filename, entry, arch))
+                packages.extend(get_packages_from_buildinfo(archive, filename, entry, arch))
                 break
     if not packages:
         print(f'WARNING: .BUILDINFO not found in package {filename}', file=stderr)
@@ -31,7 +36,7 @@ def read_file(filename, arch):
     return packages
 
 
-def get_packages_from_buildinfo(filename, archive_entry, arch):
+def get_packages_from_buildinfo(archive, filename, archive_entry, arch):
     buildinfo = b''.join(archive_entry.get_blocks()).decode()
     m = search('format = (\\d)', buildinfo)
     buildinfo_format = 0 if not m else int(m.group(1))
@@ -41,12 +46,11 @@ def get_packages_from_buildinfo(filename, archive_entry, arch):
     if buildinfo_format > 0:
         for package in installed:
             pkgfilename = f'{package}.pkg.tar.xz'
-            m = search('^(.+)-(\\d+)?:?([\\w\\d\\.+~]+)-([\\d\\.]+)-(\\w+)$', package)
-            if not m:
-                print(f'ERROR: failed to parse package label {package} for {filename}', file=stderr)
+            pkgname = '-'.join(package.split('-')[:-3])
+            if not pkgname:
+                print(f'ERROR: failed to parse {package} with format {buildinfo_format} needed for {filename}', file=stderr)
                 continue
-            pkgname = m.group(1)
-            directory = join(ARCHIVE_DIR, 'packages', pkgname[0], pkgname)
+            directory = join(archive, 'packages', pkgname[0], pkgname)
             path = join(directory, pkgfilename)
             if not isfile(path):
                 print(f'ERROR: {package} needed for {filename} not in archive {path}', file=stderr)
@@ -56,12 +60,8 @@ def get_packages_from_buildinfo(filename, archive_entry, arch):
     for package in installed:
         filename_any = f'{package}-any.pkg.tar.xz'
         filename_arch = f'{package}-{arch}.pkg.tar.xz'
-        m = search('^(.+)-(\\d+)?:?([\\w\\d\\.+~]+)-([\\d\\.]+)$', package)
-        if not m:
-            print(f'ERROR: failed to parse package label {package} for {filename}', file=stderr)
-            continue
-        pkgname = m.group(1)
-        directory = join(ARCHIVE_DIR, 'packages', pkgname[0], pkgname)
+        pkgname = '-'.join(package.split('-')[:-2])
+        directory = join(archive, 'packages', pkgname[0], pkgname)
         path_any = join(directory, filename_any)
         path_arch = join(directory, filename_arch)
         if isfile(path_any):
@@ -74,22 +74,53 @@ def get_packages_from_buildinfo(filename, archive_entry, arch):
     return packages
 
 
-def main():
+def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAULT_KEEP_YEARS, delete=False):
     tasks = []
     needed = set()
     for subdir in SOURCE_WHITELIST:
         for arch in ARCHS:
-            directory = join(SOURCE_DIR, subdir, 'os', arch)
-            for filename in glob(join(directory, f'*{PKGEXT}')):
-                tasks.append((filename, arch))
+            directory = join(repo, subdir, 'os', arch)
+            for filename in glob(join(directory, f'*{PKG_EXT}')):
+                tasks.append((archive, filename, arch))
 
     with Pool(processes=32) as pool:
         results = pool.starmap(read_file, tasks)
 
     for result in results:
         needed = needed.union(result)
-    print('\n'.join(needed))
+
+    for need in needed:
+        print(f'INFO: needed package: {need}')
+
+    keep_until = datetime.now().year - keep_years
+    # fix before year 3000
+    years = list(filter(lambda year: year <= keep_until,
+                        map(lambda path: int(basename(path)), glob(join(archive, 'repos', '2*')))))
+    all_files = [filename for year in years for filename in glob(join(archive, 'repos', f'{year}', '*', '*', '*', 'os', '*', f'*{PKG_EXT}'))]
+    purge = list(filter(lambda path: basename(path) not in needed, all_files))
+    keep = list(filter(lambda path: basename(path) in needed, all_files))
+
+    for path in keep:
+        print(f'INFO: keeping file {path}')
+
+    for path in purge:
+        print(f'INFO: deleting file {path}')
+        if delete:
+            try:
+                unlink(path)
+            except FileNotFoundError:
+                print(f'ERROR: file not found for deletion: {path}')
+            try:
+                unlink(f'{path}{SIG_EXT}')
+            except FileNotFoundError:
+                print(f'ERROR: file not found for deletion: {path}{SIG_EXT}')
 
 
 if __name__ == '__main__':
-    main()
+    parser = ArgumentParser(description='Archive cleaner')
+    parser.add_argument('--archive', default=DEFAULT_ARCHIVE_DIR, help=f'root directory of the archive (default: {DEFAULT_ARCHIVE_DIR})')
+    parser.add_argument('--repo', default=DEFAULT_SOURCE_DIR, help=f'root directory of the repo (default: {DEFAULT_SOURCE_DIR})')
+    parser.add_argument('--keep-years', type=int, default=DEFAULT_KEEP_YEARS, help=f'amount of years to keep (default: {DEFAULT_KEEP_YEARS})')
+    parser.add_argument('--delete', default=False, action='store_true', help=f'really delete unwanted files')
+    args = parser.parse_args()
+    main(args.repo, args.archive, args.keep_years, args.delete)
