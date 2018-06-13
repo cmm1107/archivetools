@@ -75,10 +75,6 @@ def get_packages_from_buildinfo(archive, filename, archive_entry, arch):
     return packages
 
 
-def glob_archive(path):
-    return glob(join(path, '*', 'os', '*', f'*{PKG_EXT}'))
-
-
 def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAULT_KEEP_YEARS, processes=cpu_count() * 2, delete=False):
     tasks = []
     needed = set()
@@ -102,9 +98,11 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
     years = list(filter(lambda year: year <= keep_until,
                         map(lambda path: int(basename(path)), glob(join(archive, 'repos', '2*')))))
     purge_paths = [path for paths in [glob(join(archive, 'repos', f'{year}', '*', '*')) for year in years] for path in paths]
+    purge_paths = [join(path, '*', 'os', '*', f'*{PKG_EXT}') for path in purge_paths] + \
+                  [join(path, 'pool', '*', f'*{PKG_EXT}') for path in purge_paths]
 
     with Pool(processes=processes) as pool:
-        results = pool.map(glob_archive, purge_paths)
+        results = pool.map(glob, purge_paths)
 
     all_files = [path for paths in results for path in paths]
     purge = list(filter(lambda path: basename(path) not in needed, all_files))
