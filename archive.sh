@@ -191,18 +191,20 @@ repo_packages() {
 
 	touch "$PACKAGES_DIR" "$PKGFLAT"
 
-	(( $REPO_PACKAGES_INDEX )) && repo_packages_index "$PKGFLAT"
+	(( $REPO_PACKAGES_INDEX )) && repo_packages_index "$PACKAGES_DIR" "$PKGFLAT"
 }
 
 # creating a lightweight index (v0) for filenames
 # modification time is used to minimize download, so we don't update the file if equal
 repo_packages_index() {
 	msg 'Updating package index'
-	local INDEX="$1/index.0.xz"
-	local TMPINDEX="$1/.index.0.xz"
+	local source_directory=$1
+	local index_directory=$2
+	local INDEX="$index_directory/index.0.xz"
+	local TMPINDEX="$index_directory/.index.0.xz"
 
 	rm -f "$TMPINDEX"
-	find "$1" -name "*$PKGEXT" -printf '%f\n'|sed 's/.\{'${#PKGEXT}'\}$//'|pacsort|xz -9 > "$TMPINDEX"
+	find "$source_directory" -name "*$PKGEXT" -printf '%f\n'|sed 's/.\{'${#PKGEXT}'\}$//'|sort -u|pacsort|xz -9 > "$TMPINDEX"
 	if [[ ! -e "$INDEX" ]]; then
 	  mv "$TMPINDEX" "$INDEX"
 	elif diff -q "$INDEX" "$TMPINDEX"; then
