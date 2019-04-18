@@ -9,6 +9,7 @@ from os import unlink
 from os.path import basename
 from os.path import isfile
 from os.path import join
+from os.path import getsize
 from re import finditer
 from re import search
 from sys import stderr
@@ -22,6 +23,14 @@ DEFAULT_ARCHIVE_DIR = '/srv/archive'
 DEFAULT_SOURCE_DIR = '/srv/ftp'
 SOURCE_WHITELIST = ['core', 'extra', 'staging', 'testing', 'community', 'community-staging', 'community-testing', 'multilib', 'multilib-staging', 'multilib-testing', 'gnome-unstable', 'kde-unstable']
 DEFAULT_KEEP_YEARS = 3
+
+
+def human_filesize(size):
+    for unit in ['', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024:
+            break
+        size /= 1024
+    return f'{size:.2f} {unit}'
 
 
 def read_file(archive, filename, arch):
@@ -111,6 +120,9 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
     for path in keep:
         print(f'INFO: keeping file {path}')
 
+    cleanup_size = 0
+    removed = set()
+
     for path in purge:
         print(f'INFO: deleting file {path}')
         if delete:
@@ -122,6 +134,24 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
                 unlink(f'{path}{SIG_EXT}')
             except FileNotFoundError:
                 print(f'ERROR: file not found for deletion: {path}{SIG_EXT}')
+        else:
+            pkg = basename(path)
+            if pkg in removed:
+                continue
+
+            try:
+                cleanup_size += getsize(path)
+                removed.add(pkg)
+            except FileNotFoundError:
+                print(f'ERROR: file not found for calculation size: {path}')
+            try:
+                cleanup_size += getsize(f'{path}{SIG_EXT}')
+            except FileNotFoundError:
+                print(f'ERROR: file not found for calculation size: {path}{SIG_EXT}')
+
+
+    cleanup_size = human_filesize(cleanup_size)
+    print(f'total estimated cleanup size {cleanup_size}')
 
 
 if __name__ == '__main__':
