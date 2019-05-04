@@ -19,10 +19,23 @@ from libarchive import file_reader
 ARCHS = ['x86_64']
 PKG_EXT = '.tar.xz'
 SIG_EXT = '.sig'
+SOURCE_EXT = '.src.tar.gz'
 DEFAULT_ARCHIVE_DIR = '/srv/archive'
 DEFAULT_SOURCE_DIR = '/srv/ftp'
 SOURCE_WHITELIST = ['core', 'extra', 'staging', 'testing', 'community', 'community-staging', 'community-testing', 'multilib', 'multilib-staging', 'multilib-testing', 'gnome-unstable', 'kde-unstable']
 DEFAULT_KEEP_YEARS = 3
+
+
+def get_sourceball(path):
+    print(path)
+    m = search('\d{4}/\d{2}/\d{2}', path)
+    date = m.group(0)
+
+    pkgname = basename(path)
+    pkgver, pkgrel, _ = pkgname.split('-')[-3:]
+    pkgname, _ = pkgname.split(f'-{pkgver}-{pkgrel}')
+
+    return f'/srv/archive/repos/{date}/sources/packages/{pkgname}-{pkgver}-{pkgrel}{SOURCE_EXT}'
 
 
 def human_filesize(size):
@@ -125,6 +138,10 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
 
     for path in purge:
         print(f'INFO: deleting file {path}')
+
+        sourceball = get_sourceball(path)
+        print(sourceball)
+
         if delete:
             try:
                 unlink(path)
@@ -134,6 +151,10 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
                 unlink(f'{path}{SIG_EXT}')
             except FileNotFoundError:
                 print(f'ERROR: file not found for deletion: {path}{SIG_EXT}')
+            try:
+                unlink(sourceball)
+            except FileNotFoundError:
+                print(f'ERROR: file not found for deletion: {sourceball}')
         else:
             pkg = basename(path)
             if pkg in removed:
@@ -149,6 +170,10 @@ def main(repo=DEFAULT_SOURCE_DIR, archive=DEFAULT_ARCHIVE_DIR, keep_years=DEFAUL
             except FileNotFoundError:
                 print(f'ERROR: file not found for calculation size: {path}{SIG_EXT}')
 
+            try:
+                cleanup_size += getsize(sourceball)
+            except FileNotFoundError:
+                print(f'ERROR: file not found for calculation size: {sourceball}')
 
     cleanup_size = human_filesize(cleanup_size)
     print(f'total estimated cleanup size {cleanup_size}')
