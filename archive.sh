@@ -77,6 +77,7 @@ gen_repo_filter() {
 	done
 	echo '- .*' >> "$tmp_file"
 	echo '- /*/' >> "$tmp_file"
+	echo '- /pool/*-debug/' >> "$tmp_file"
 	echo "$tmp_file"
 }
 
